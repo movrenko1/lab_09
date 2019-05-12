@@ -1,0 +1,114 @@
+---
+title: "Лабораторная №9"
+output:
+  html_document:
+    df_print: paged
+---
+
+#Практика 9
+#Машины опорных векторов
+
+Данные: Auto {ISLR}
+Необходимо построить модель на основе SVM для зависимой переменной high.mpg и объясняющих переменных displacement, acceleration.
+
+Переменная high.mpg – высокое значение mpg (сколько автомобиль проходит на галлоне топлива): 
+
+$$high.mpg = \begin{cases} Yes, & \mathrm{если} \, mpg ≥ 23, \\ No, & \mathrm{если} \, mpg < 23. \end{cases}$$ 
+
+```{r first}
+library('e1071')     # SVM
+library('ROCR')      # ROC-кривые
+library('ISLR')      # данные по экспрессии генов
+library('GGally')    # матричный график разброса ggpairs()
+my.seed <- 1
+attach(Auto) 
+data(Auto)            
+?Auto      
+high.mpg <- ifelse(Auto$mpg < 23, "No", "Yes")
+# присоединяем к таблице данных
+Auto <- data.frame(Auto, high.mpg)
+high.mpg <- as.factor(high.mpg)
+set.seed(my.seed)
+# матричные графики разброса переменных
+p <- ggpairs(Auto[, c('high.mpg', 'displacement', 'acceleration')],
+             aes(color = high.mpg))
+suppressMessages(print(p))
+```
+
+#Машина опорных векторов с полиномиальным ядром второй степени.
+
+
+```{r second}
+# таблица с данными, отклик — фактор 
+dat <- data.frame(displacement, acceleration, high.mpg) 
+plot(displacement, acceleration, col = high.mpg, pch = 19)
+train <- sample(1:nrow(dat), nrow(dat)/2) # обучающая выборка -- 50%
+# SVM с с полиномиальным ядром второй степени  и маленьким cost
+svmfit <- svm(high.mpg ~ ., data = dat[train, ], kernel = "polynomial", 
+              gamma = 1, degree = 2, cost = 1)
+plot(svmfit, dat[train, ])
+summary(svmfit)
+# SVM с с полиномиальным ядром второй степени и большим cost
+svmfit <- svm(high.mpg ~ ., data = dat[train, ], kernel = "polynomial", 
+              gamma = 1, degree = 2, cost = 1e4)
+plot(svmfit, dat[train, ])
+# перекрёстная проверка
+set.seed(my.seed)
+tune.out <- tune(svm,high.mpg  ~ ., data = dat[train, ], kernel = "polynomial", 
+                 ranges = list(cost = c(0.1, 1, 10), degree = 2,
+                               gamma = c(0.5, 1, 2, 3, 4)))
+summary(tune.out)
+# матрица неточностей для прогноза по лучшей модели
+tab <- table(true = dat[-train, "high.mpg"], 
+                pred = predict(tune.out$best.model, 
+                               newdata = dat[-train, ]))
+tab
+modl <- tune.out$best.model
+summary(modl)
+
+#MSE
+sum(diag(tab)/sum(tab))
+```
+
+Точность модели недостаточно высока.
+
+#ROC-кривые
+```{r third}
+# функция построения ROC-кривой: pred -- прогноз, truth -- факт
+rocplot <- function(pred, truth, ...){
+  predob = prediction(pred, truth)
+  perf = performance(predob, "tpr", "fpr")
+  plot(perf,...)}
+
+# последняя оптимальная модель
+svmfit.opt <- svm(high.mpg ~ ., data = dat[train, ], 
+                  kernel = "polynomial", gamma = 0.5, degree = 2,
+                  cost = 10, decision.values = T)
+
+# количественные модельные значения, на основе которых присваивается класс
+fitted <- attributes(predict(svmfit.opt, dat[train, ],
+                             decision.values = TRUE))$decision.values
+
+# график для обучающей выборки
+par(mfrow = c(1, 2))
+rocplot(fitted, dat[train, "high.mpg"], main = "Training Data")
+
+# более гибкая модель (gamma выше)
+svmfit.flex = svm(high.mpg ~ ., data = dat[train, ], kernel = "polynomial", 
+                  gamma = 25, degree = 2, cost = 10, decision.values = T)
+fitted <- attributes(predict(svmfit.flex, dat[train, ], 
+                             decision.values = T))$decision.values
+rocplot(fitted, dat[train,"high.mpg"], add = T, col = "red")
+
+# график для тестовой выборки
+fitted <- attributes(predict(svmfit.opt, dat[-train, ], 
+                             decision.values = T))$decision.values
+rocplot(fitted, dat[-train, "high.mpg"], main = "Test Data")
+fitted <- attributes(predict(svmfit.flex, dat[-train, ], 
+                             decision.values = T))$decision.values
+rocplot(fitted, dat[-train, "high.mpg"], add = T, col = "red")
+
+```
+
+
+ROC-кривые показывают достаточное количество неточных предсказаний. Возможно это связано с малым количеством объясняющих переменных. 
